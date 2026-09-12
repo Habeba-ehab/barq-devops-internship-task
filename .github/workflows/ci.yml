@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate-environment:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare environment file
+        run: cp .env.example .env
+
+      - name: Syntax check (docker compose config)
+        run: docker compose -p barq-assessment config --quiet
+
+      - name: Build images
+        run: docker compose -p barq-assessment build
+
+      - name: Start environment
+        run: docker compose -p barq-assessment up -d
+
+      - name: Wait for readiness
+        run: |
+          echo "Waiting for /ready to return 200..."
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8080/ready > /dev/null; then
+              echo "Environment is ready."
+              exit 0
+            fi
+            echo "Not ready yet (attempt $i/30), waiting..."
+            sleep 2
+          done
+          echo "Environment did not become ready in time." >&2
+          docker compose -p barq-assessment logs --no-color
+          exit 1
+
+      - name: Run validate.py
+        run: python3 validate.py
+
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose -p barq-assessment logs --no-color
+
+      - name: Tear down
+        if: always()
+        run: docker compose -p barq-assessment down -v
