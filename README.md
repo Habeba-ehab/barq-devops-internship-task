@@ -1,97 +1,134 @@
 <img src="assets/barq-logo.svg" alt="BARQ Systems" width="180">
 
-# DevOps Internship Task - Starter v2
+# BARQ DevOps Internship Task - Solution
 
-**Due date:** ____________________
+Flask API behind NGINX, with PostgreSQL and Redis, running as two load-balanced backend
+instances. This README documents the actual, working setup after fixing the intentionally
+broken starter environment (see `troubleshooting.md` for the full investigation).
 
-**Time window:** 4 calendar days from the invitation email date/time.
+## Requirements
 
-Read [the task](assessment/TASK.md), then [the API contract](assessment/APPLICATION.md).
-Everyone receives this same release. The environment is intentionally broken.
-Hidden issue types and count are not disclosed. Investigate this project; do not replace it.
+- Linux or WSL2
+- Docker with Compose
+- Python 3.12 (for running `validate.py` / `failure_test.py` outside a container)
 
-## Included
-
-- Flask API, PostgreSQL, Redis, Docker and NGINX starter files.
-- Three historical logs, a question template and documentation templates.
-- App-only tests and a recorded challenge script.
-- Unimplemented validation, failure-test and backup/restore placeholders.
-
-Use synthetic lab accounts/data only. Supplied values are for this disposable exercise,
-never for real services. Keep the lab on your local machine; do not expose it publicly.
-
-## Before you start
-
-- Linux or WSL2, Python 3.12, Git and Docker with Compose.
-- Docker Desktop must use Linux containers. Run shell scripts in Linux/WSL.
-- Suggested capacity: 2 CPU cores, 4 GB free RAM and 3 GB free disk, plus Docker overhead.
-- Internet for first downloads and GitHub. No cloud account or paid registry required.
-- Use a machine where container names app-01, app-02, nginx, postgres and redis are unused.
-  Do not delete someone else's containers to free those names.
-- Intended public port: 8080 before the video, 8090 after the live change.
-  If either is occupied, ask the organizer for a documented workstation exception.
-
-## Start
-
-Clone the supplied Git bundle/repository. Keep both release commits and the v2 baseline tag.
-Set your own Git name/email before making changes.
-
-From the repository root:
+## Setup
 
 ```bash
-git status
-git log -2 --oneline
+git clone https://github.com/Habeba-ehab/barq-devops-internship-task.git
+cd barq-devops-internship-task
 cp .env.example .env
-docker version
-docker compose version
+```
+
+## Build and start
+
+```bash
 docker compose -p barq-assessment up --build -d
 docker compose -p barq-assessment ps -a
+```
+
+All 5 containers (`app-01`, `app-02`, `nginx`, `postgres`, `redis`) should show `Up` and
+`(healthy)` after a few seconds. If any show `(unhealthy)` or `Exited`, check logs:
+
+```bash
 docker compose -p barq-assessment logs --no-color
 ```
 
-The initial environment is not expected to pass. Record what actually happens.
-The intended URL is http://127.0.0.1:8080; do not assume the starter configuration is correct.
-
-App-only checks use fake dependencies, not real SQL/Redis or Docker networking:
+## Verify it's working
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-python -m unittest discover -s tests -v
+curl -i http://127.0.0.1:8080/health
+curl -i http://127.0.0.1:8080/ready
+curl -i http://127.0.0.1:8080/instance
+curl -H 'Content-Type: application/json' -d '{"title":"example record"}' http://127.0.0.1:8080/records
+curl http://127.0.0.1:8080/records
+curl http://127.0.0.1:8080/counter
 ```
 
-## Your work
+## Run the validation suite
 
-- Complete [assessment/TASK.md](assessment/TASK.md).
-- Implement validate.py, failure_test.py, backup.sh and restore.sh, or documented equivalents.
-  Placeholders deliberately exit 2; they are unfinished deliverables, not validation evidence.
-- Create .github/workflows/ci.yml yourself.
-- Complete the root report templates and docs/EVIDENCE_INDEX.md.
-- Add architecture.png or architecture.pdf.
-- Replace this README with copyable setup/build/run/test/failure/backup/restore/cleanup commands.
-- Commit as you work. Do not commit real secrets, backups, virtual environments or challenge state.
-
-## Recorded challenge
-
-Use the supplied video_challenge.sh unchanged. Read its code if needed; do not run it early.
-After repairing the environment, run it once, for the first time in the video working copy,
-during the continuous 12-18 minute recording. The script requires healthy services, both
-initial instances and the target network layout. Preflight failures make no runtime changes.
+Checks public access, all endpoints, both backends, PostgreSQL/Redis readiness, network
+isolation, and that Postgres/Redis ports are not published to the host.
 
 ```bash
-./video_challenge.sh
+python3 validate.py
+echo "Exit code: $?"   # 0 = all checks passed
 ```
 
-If you deliberately changed the project name, pass --project YOUR_PROJECT.
-An organizer-approved alternate local URL can be passed with --url http://127.0.0.1:PORT.
-The script touches only matching Compose-owned lab containers/networks.
-Keep the receipt in .assessment/challenge.json for the evidence index. Do not delete the
-one-run marker to retry. A local marker is not tamper-proof; ownership is judged from evidence.
-Do not use docker compose down to reset the runtime challenge.
+## Run the failure/recovery test
 
-## Stop safely
+Stops `app-01`, measures traffic/errors while it is down, restores it, and proves it
+resumes serving requests.
 
-Outside the recorded challenge, docker compose -p barq-assessment down stops this lab.
-Do not use --volumes during persistence tests. Avoid global Docker prune/cleanup commands.
-Back up anything you need before removing containers; investigate whether data actually persists.
+```bash
+python3 failure_test.py
+echo "Exit code: $?"   # 0 = failure and recovery both verified
+```
+
+## Backup and restore PostgreSQL
+
+```bash
+# Create a backup (writes a timestamped .sql file to ./backups/)
+./backup.sh
+
+# Restore from a specific backup file
+./restore.sh ./backups/backup_<timestamp>.sql
+```
+
+To prove persistence across container recreation:
+
+```bash
+curl -X POST -H 'Content-Type: application/json' -d '{"title":"persistence check"}' http://127.0.0.1:8080/records
+docker compose -p barq-assessment up -d --force-recreate postgres
+curl http://127.0.0.1:8080/records   # the record above should still be present
+```
+
+## Run the log analysis scripts
+
+Analyzes the three historical logs in `logs/` (see `log_analysis.md` for full findings).
+
+```bash
+python3 scripts/q3_status_counts.py
+python3 scripts/q4_failures.py
+python3 scripts/q5_latency.py
+python3 scripts/q6_retries.py
+python3 scripts/q7_timeline.py
+```
+
+## Stop
+
+```bash
+docker compose -p barq-assessment down
+```
+
+Do not add `-v` here if you want to keep the Postgres/Redis data volumes between runs.
+
+## Full cleanup (removes all data)
+
+```bash
+docker compose -p barq-assessment down -v
+```
+
+This removes the named volumes (`postgres-data`, `redis-data`), so all database records and
+the Redis counter will be permanently lost. Only run this when you genuinely want a clean
+slate.
+
+## Project structure
+
+- `docker-compose.yml`, `Dockerfile`, `app/`, `nginx/nginx.conf` - the environment
+- `config/app.env` - non-secret app configuration (real secrets should not live here in
+  production, see `security_review.md`)
+- `validate.py`, `failure_test.py`, `backup.sh`, `restore.sh` - Part 3 automation
+- `.github/workflows/ci.yml` - CI pipeline (checkout, syntax check, build, start, wait,
+  validate)
+- `logs/`, `log_analysis.md`, `scripts/` - historical log analysis
+- `troubleshooting.md`, `decisions.md`, `security_review.md`, `AI_USAGE.md` - reports
+- `docs/EVIDENCE_INDEX.md` - requirement-to-evidence mapping
+
+## Documentation
+
+- [troubleshooting.md](troubleshooting.md) - investigation journal for every issue found and fixed
+- [log_analysis.md](log_analysis.md) - analysis of the three historical logs
+- [decisions.md](decisions.md) - technical decisions, alternatives, and trade-offs
+- [security_review.md](security_review.md) - security findings and production follow-ups
+- [AI_USAGE.md](AI_USAGE.md) - AI usage disclosure
